@@ -2,6 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:math';
 import 'package:flutter/services.dart';
+import 'package:uuid/uuid.dart';
+
+/// Signature for a callback when the pointer is in contact with the screen and has moved again
+/// Unlike [GestureDragUpdateCallback] this callback also provides the id of the drag
+/// so that we can, act on individual pointers
+typedef GestureDragUpdateCallbackWithPointerId = void Function(
+    String uuid, DragUpdateDetails details);
+
+/// Signature for a callback when the pointer is no longer in contact with the screen
+/// Unlike [GestureDragEndCallback] this callback also provides the id of the drag
+/// so that we can, act on individual pointers
+typedef GestureDragEndCallbackWithPointerId = void Function(
+    String uuid, DragEndDetails details);
+
+/// Signature for a callback when the drag was cancelled.
+/// Unlike [GestureDragCancelCallback] this callback also provies the id of the drag
+/// so that we can, act on individual pointers
+typedef GestureDragCancelCallbackWithPointerId = void Function(String uuid);
 
 class FingerChooser extends StatefulWidget {
   @override
@@ -11,8 +29,10 @@ class FingerChooser extends StatefulWidget {
 }
 
 class FingerChooserState extends State<FingerChooser> {
-  Map<int, ConcentricCircle> _concentricCircles =
-      new Map<int, ConcentricCircle>();
+  Map<String, ConcentricCircle> _concentricCircles =
+      new Map<String, ConcentricCircle>();
+  Uuid _uuid = new Uuid();
+  int _colorIndex = 0;
   List<Color> _colors = [
     Colors.blue,
     Colors.green,
@@ -27,50 +47,46 @@ class FingerChooserState extends State<FingerChooser> {
 //  ImmediateMultiDragGestureRecognizer dragGestureRecognizer =
 //      new ImmediateMultiDragGestureRecognizer();
 
-  void _onDragCancel() {
-    print('Cancelling the drag');
+  void _onDragCancel(String uuid) {
+    setState(() {
+      _concentricCircles.remove(uuid);
+    });
   }
 
-  void _onDragUpdate(DragUpdateDetails details) {
-    print('Update position' + details.toString());
+  void _onDragUpdate(String uuid, DragUpdateDetails details) {
+    setState(() {
+      _concentricCircles[uuid].center = details.localPosition;
+    });
   }
 
-  void _onDragEnd(DragEndDetails details) {
-    print('End Drag' + details.toString());
+  void _onDragEnd(String uuid, DragEndDetails details) {
+    setState(() {
+      _concentricCircles.remove(uuid);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return RawGestureDetector(
       gestures: {
-//        MultiTapGestureRecognizer:
-//            GestureRecognizerFactoryWithHandlers<MultiTapGestureRecognizer>(
-//          () => MultiTapGestureRecognizer(),
-//          (MultiTapGestureRecognizer instance) {
-//            instance.onTapCancel = (int pointer) {
-//              _concentricCircles.remove(pointer);
-//              setState(() {});
-//            };
-//            instance.onTapUp = (int pointer, TapUpDetails details) {
-//              _concentricCircles.remove(pointer);
-//              setState(() {});
-//            };
-//            instance.onTapDown = (int pointer, TapDownDetails details) {
-//              _concentricCircles[pointer] = ConcentricCircle(
-//                  center: details.localPosition,
-//                  color: _colors[pointer % _colors.length]);
-//              HapticFeedback.lightImpact();
-//              setState(() {});
-//            };
-//          },
-//        ),
         ImmediateMultiDragGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<
                     ImmediateMultiDragGestureRecognizer>(
                 () => ImmediateMultiDragGestureRecognizer(),
                 (ImmediateMultiDragGestureRecognizer instance) {
-          instance.onStart = (Offset d) {
-            return CircleDrag(onUpdate: _onDragUpdate, onCancel: _onDragCancel, onEnd: _onDragEnd );
+          instance.onStart = (Offset offset) {
+            HapticFeedback.lightImpact();
+            String id = _uuid.v1();
+            CircleDrag circleDrag = new CircleDrag(
+                uuid: id,
+                onUpdate: _onDragUpdate,
+                onCancel: _onDragCancel,
+                onEnd: _onDragEnd);
+
+            _concentricCircles[id] = ConcentricCircle(
+                center: offset, color: _colors[_colorIndex++ % _colors.length]);
+
+            return circleDrag;
           };
         })
       },
@@ -81,8 +97,8 @@ class FingerChooserState extends State<FingerChooser> {
         ),
         child: Container(
           child: CustomPaint(
-            painter: new CirclePainter(
-                concentricCircles: _concentricCircles.values),
+            painter:
+                new CirclePainter(concentricCircles: _concentricCircles.values),
             child: Container(),
           ),
         ),
@@ -123,7 +139,7 @@ class CirclePainter extends CustomPainter {
 }
 
 class ConcentricCircle {
-  final Offset center;
+  Offset center;
   final double innerRadius;
   final double outerRadius;
   final Color color;
@@ -136,26 +152,25 @@ class ConcentricCircle {
 }
 
 class CircleDrag extends Drag {
-  int counter;
-  Offset center;
-  GestureDragUpdateCallback onUpdate;
-  GestureDragCancelCallback onCancel;
-  GestureDragEndCallback onEnd;
+  String uuid;
+  GestureDragUpdateCallbackWithPointerId onUpdate;
+  GestureDragCancelCallbackWithPointerId onCancel;
+  GestureDragEndCallbackWithPointerId onEnd;
 
-  CircleDrag({this.onUpdate, this.onCancel, this.onEnd});
+  CircleDrag({this.uuid, this.onUpdate, this.onCancel, this.onEnd});
 
   @override
   void cancel() {
-    onCancel();
+    onCancel(uuid);
   }
 
   @override
   end(DragEndDetails details) {
-    onEnd(details);
+    onEnd(uuid, details);
   }
 
   @override
   void update(DragUpdateDetails details) {
-    onUpdate(details);
+    onUpdate(uuid, details);
   }
 }
