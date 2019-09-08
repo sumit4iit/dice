@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:math';
@@ -29,6 +31,9 @@ class FingerChooser extends StatefulWidget {
 }
 
 class FingerChooserState extends State<FingerChooser> {
+  /// Keep track of the number of pointers touching the screen simultaneously
+  int _fingers = 0;
+
   Map<String, ConcentricCircle> _concentricCircles =
       new Map<String, ConcentricCircle>();
   Uuid _uuid = new Uuid();
@@ -48,6 +53,7 @@ class FingerChooserState extends State<FingerChooser> {
 //      new ImmediateMultiDragGestureRecognizer();
 
   void _onDragCancel(String uuid) {
+    _fingers--;
     setState(() {
       _concentricCircles.remove(uuid);
     });
@@ -60,8 +66,23 @@ class FingerChooserState extends State<FingerChooser> {
   }
 
   void _onDragEnd(String uuid, DragEndDetails details) {
+    _fingers--;
     setState(() {
       _concentricCircles.remove(uuid);
+    });
+  }
+
+  void _timerCallBack() {
+    // Get the list of keys and randomly shuffle
+    List<String> keys = _concentricCircles.keys.toList()
+      ..shuffle(Random.secure());
+    String selectedKey = keys.first;
+    ConcentricCircle selectedFinger = _concentricCircles[selectedKey];
+
+    _concentricCircles = new Map<String, ConcentricCircle>();
+    _concentricCircles[selectedKey] = selectedFinger;
+    setState(() {
+      HapticFeedback.heavyImpact();
     });
   }
 
@@ -86,6 +107,10 @@ class FingerChooserState extends State<FingerChooser> {
             _concentricCircles[id] = ConcentricCircle(
                 center: offset, color: _colors[_colorIndex++ % _colors.length]);
 
+            _fingers++;
+            if (_fingers == 3) {
+              new Timer(new Duration(seconds: 4), _timerCallBack);
+            }
             return circleDrag;
           };
         })
