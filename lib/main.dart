@@ -31,7 +31,7 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   double _width = 100;
   double _height = 100;
-  double _border_radius = 10;
+  double _borderRadius = 10;
   Color color = Colors.blue;
   Duration _duration = new Duration(seconds: 10);
 
@@ -57,7 +57,7 @@ class _MyHomePageState extends State<MyHomePage> {
 //          color: color,
           decoration: BoxDecoration(
             color: Colors.blue,
-            borderRadius: BorderRadius.all(Radius.circular(_border_radius)),
+            borderRadius: BorderRadius.all(Radius.circular(_borderRadius)),
           ),
         )),
       ),

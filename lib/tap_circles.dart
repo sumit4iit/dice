@@ -6,36 +6,32 @@ import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-/// Signature for a callback when the pointer is in contact with the screen and has moved again
-/// Unlike [GestureDragUpdateCallback] this callback also provides the id of the drag
-/// so that we can, act on individual pointers
-typedef GestureDragUpdateCallbackWithPointerId = void Function(
-    String uuid, DragUpdateDetails details);
+import 'concentric_circle.dart';
+import 'circle_drag.dart';
 
-/// Signature for a callback when the pointer is no longer in contact with the screen
-/// Unlike [GestureDragEndCallback] this callback also provides the id of the drag
-/// so that we can, act on individual pointers
-typedef GestureDragEndCallbackWithPointerId = void Function(
-    String uuid, DragEndDetails details);
-
-/// Signature for a callback when the drag was cancelled.
-/// Unlike [GestureDragCancelCallback] this callback also provies the id of the drag
-/// so that we can, act on individual pointers
-typedef GestureDragCancelCallbackWithPointerId = void Function(String uuid);
+typedef PointerTouchAnimationCallback = void Function(
+    String uuid, double value);
 
 class FingerChooser extends StatefulWidget {
   @override
-  FingerChooserState createState() {
-    return FingerChooserState();
+  _FingerChooserState createState() {
+    return _FingerChooserState();
   }
 }
 
-class FingerChooserState extends State<FingerChooser> {
+class _FingerChooserState extends State<FingerChooser>
+    with TickerProviderStateMixin {
   /// Keep track of the number of pointers touching the screen simultaneously
   int _fingers = 0;
 
   Map<String, ConcentricCircle> _concentricCircles =
       new Map<String, ConcentricCircle>();
+
+  Map<String, AnimationController> _circlePopAnimator =
+      new Map<String, AnimationController>();
+
+  AnimationController _winnerController;
+
   Uuid _uuid = new Uuid();
   int _colorIndex = 0;
   List<Color> _colors = [
@@ -49,41 +45,123 @@ class FingerChooserState extends State<FingerChooser> {
     Colors.limeAccent,
   ]..shuffle(new Random.secure());
 
-//  ImmediateMultiDragGestureRecognizer dragGestureRecognizer =
-//      new ImmediateMultiDragGestureRecognizer();
+  bool _removeFinger(String uuid) {
+    _fingers--;
 
+    // if all fingers have been removed from the screen
+    if (_fingers == 0 && _winnerController != null) {
+      _winnerController.dispose();
+    }
+
+    _circlePopAnimator[uuid].dispose();
+    _circlePopAnimator.remove(uuid);
+
+    return _concentricCircles.remove(uuid) != null;
+  }
+
+  void _addFinger(String uuid, ConcentricCircle concentricCircle) {
+    _fingers++;
+    _concentricCircles[uuid] = concentricCircle;
+  }
+
+  /// Callback for when the drag gesture has been cancelled for the current
+  /// pointer
   void _onDragCancel(String uuid) {
-    _fingers--;
-    setState(() {
-      _concentricCircles.remove(uuid);
-    });
+    if (_removeFinger(uuid)) {
+      setState(() {});
+    }
   }
 
-  void _onDragUpdate(String uuid, DragUpdateDetails details) {
-    setState(() {
-      _concentricCircles[uuid].center = details.localPosition;
-    });
-  }
-
+  /// Callback when the drag gesture has ended and the pointer is no longer
+  /// in contact with the screen
   void _onDragEnd(String uuid, DragEndDetails details) {
-    _fingers--;
-    setState(() {
-      _concentricCircles.remove(uuid);
-    });
+    _onDragCancel(uuid);
   }
 
-  void _timerCallBack() {
+  /// Callback for when the pointer is in contact with the screen and is moving
+  void _onDragUpdate(String uuid, DragUpdateDetails details) {
+    ConcentricCircle concentricCircle = _concentricCircles[uuid];
+    if (concentricCircle != null) {
+      concentricCircle.center = details.localPosition;
+      setState(() {});
+    }
+  }
+
+  /// Timer callback to decide the winner pointer among the ones which are still
+  /// in contact with the screen
+  void _winnerTimerCallBack() {
     // Get the list of keys and randomly shuffle
     List<String> keys = _concentricCircles.keys.toList()
       ..shuffle(Random.secure());
-    String selectedKey = keys.first;
-    ConcentricCircle selectedFinger = _concentricCircles[selectedKey];
 
-    _concentricCircles = new Map<String, ConcentricCircle>();
-    _concentricCircles[selectedKey] = selectedFinger;
-    setState(() {
-      HapticFeedback.heavyImpact();
+    if (keys.isNotEmpty) {
+      String selectedKey = keys.first;
+      ConcentricCircle selectedFinger = _concentricCircles[selectedKey];
+
+      _concentricCircles.clear();
+      _concentricCircles[selectedKey] = selectedFinger;
+      _winnerAnimate(selectedFinger);
+    }
+  }
+
+  void _winnerAnimate(ConcentricCircle concentricCircle) {
+    HapticFeedback.heavyImpact();
+    _winnerController = new AnimationController(
+        vsync: this, duration: Duration(milliseconds: 500));
+    Animation<double> winnerSelector = new Tween<double>(
+            begin: 70,
+            end: max(MediaQuery.of(context).size.width,
+                MediaQuery.of(context).size.height))
+        .animate(new CurvedAnimation(
+            parent: _winnerController, curve: Curves.easeInCirc));
+    winnerSelector.addListener(() {
+      setState(() {
+        concentricCircle.innerRadius = winnerSelector.value;
+      });
     });
+
+    _winnerController.forward();
+  }
+
+  void _animateOnTouch(String id, ConcentricCircle concentricCircle) {
+    // Add animation controller to control the size of the radius
+    AnimationController radiusController = new AnimationController(
+        vsync: this, duration: Duration(milliseconds: 500));
+
+    Animation<double> circlePopAnimation = new Tween<double>(begin: 0, end: 1)
+        .animate(new CurvedAnimation(
+            parent: radiusController, curve: Curves.bounceOut));
+    _circlePopAnimator[id] = radiusController;
+    circlePopAnimation.addListener(() {
+      setState(() {
+        concentricCircle.innerRadius = circlePopAnimation.value * 70;
+        concentricCircle.outerRadius = circlePopAnimation.value * 50;
+        concentricCircle.strokeWidth = circlePopAnimation.value * 10;
+      });
+    });
+    radiusController.forward();
+  }
+
+  Drag _onTouchStart(Offset offset) {
+    HapticFeedback.lightImpact();
+    String id = _uuid.v1();
+    CircleDrag circleDrag = new CircleDrag(
+        uuid: id,
+        onUpdate: _onDragUpdate,
+        onCancel: _onDragCancel,
+        onEnd: _onDragEnd);
+
+    ConcentricCircle concentricCircle = ConcentricCircle(
+        center: offset, color: _colors[_colorIndex++ % _colors.length]);
+
+    _addFinger(id, concentricCircle);
+
+    if (_fingers == 2) {
+      new Timer(new Duration(seconds: 2), _winnerTimerCallBack);
+    }
+
+    _animateOnTouch(id, concentricCircle);
+    return circleDrag;
   }
 
   @override
@@ -95,24 +173,7 @@ class FingerChooserState extends State<FingerChooser> {
                     ImmediateMultiDragGestureRecognizer>(
                 () => ImmediateMultiDragGestureRecognizer(),
                 (ImmediateMultiDragGestureRecognizer instance) {
-          instance.onStart = (Offset offset) {
-            HapticFeedback.lightImpact();
-            String id = _uuid.v1();
-            CircleDrag circleDrag = new CircleDrag(
-                uuid: id,
-                onUpdate: _onDragUpdate,
-                onCancel: _onDragCancel,
-                onEnd: _onDragEnd);
-
-            _concentricCircles[id] = ConcentricCircle(
-                center: offset, color: _colors[_colorIndex++ % _colors.length]);
-
-            _fingers++;
-            if (_fingers == 3) {
-              new Timer(new Duration(seconds: 4), _timerCallBack);
-            }
-            return circleDrag;
-          };
+          instance.onStart = _onTouchStart;
         })
       },
       child: new Container(
@@ -130,72 +191,15 @@ class FingerChooserState extends State<FingerChooser> {
       ),
     );
   }
-}
-
-class CirclePainter extends CustomPainter {
-  Iterable<ConcentricCircle> concentricCircles;
-
-  CirclePainter({this.concentricCircles});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    for (ConcentricCircle concentricCircle in this.concentricCircles) {
-      Paint solidCirclePaint = new Paint()
-        ..color = concentricCircle.color.withAlpha(90)
-        ..strokeWidth = 10
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(concentricCircle.center, concentricCircle.innerRadius,
-          solidCirclePaint);
+  void dispose() {
+    super.dispose();
 
-      Paint concentricArc = new Paint()
-        ..color = concentricCircle.color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 10
-        ..strokeCap = StrokeCap.round;
-      canvas.drawCircle(
-          concentricCircle.center, concentricCircle.outerRadius, concentricArc);
+    // Cleanup leftover animation controllers
+    _winnerController.dispose();
+    for (AnimationController controller in _circlePopAnimator.values) {
+      controller.dispose();
     }
-  }
-
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) {
-    return true;
-  }
-}
-
-class ConcentricCircle {
-  Offset center;
-  final double innerRadius;
-  final double outerRadius;
-  final Color color;
-
-  ConcentricCircle(
-      {this.center,
-      this.innerRadius = 50,
-      this.outerRadius = 60,
-      this.color = Colors.blue});
-}
-
-class CircleDrag extends Drag {
-  String uuid;
-  GestureDragUpdateCallbackWithPointerId onUpdate;
-  GestureDragCancelCallbackWithPointerId onCancel;
-  GestureDragEndCallbackWithPointerId onEnd;
-
-  CircleDrag({this.uuid, this.onUpdate, this.onCancel, this.onEnd});
-
-  @override
-  void cancel() {
-    onCancel(uuid);
-  }
-
-  @override
-  end(DragEndDetails details) {
-    onEnd(uuid, details);
-  }
-
-  @override
-  void update(DragUpdateDetails details) {
-    onUpdate(uuid, details);
   }
 }
