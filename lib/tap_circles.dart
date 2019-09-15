@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dice/redisposable_animation_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:math';
@@ -30,7 +31,8 @@ class _FingerChooserState extends State<FingerChooser>
   Map<String, AnimationController> _circlePopAnimator =
       new Map<String, AnimationController>();
 
-  AnimationController _winnerController;
+  RedisposableAnimationController _winnerController;
+  Timer _winningTimer;
 
   Uuid _uuid = new Uuid();
   int _colorIndex = 0;
@@ -49,8 +51,9 @@ class _FingerChooserState extends State<FingerChooser>
     _fingers--;
 
     // if all fingers have been removed from the screen
-    if (_fingers == 0 && _winnerController != null) {
-      _winnerController.dispose();
+    if (_fingers == 0) {
+      _winningTimer.cancel();
+      if (_winnerController != null) _winnerController.dispose();
     }
 
     _circlePopAnimator[uuid].dispose();
@@ -62,6 +65,10 @@ class _FingerChooserState extends State<FingerChooser>
   void _addFinger(String uuid, ConcentricCircle concentricCircle) {
     _fingers++;
     _concentricCircles[uuid] = concentricCircle;
+
+    if (_fingers == 2) {
+      _winningTimer = new Timer(new Duration(seconds: 2), _winnerTimerCallBack);
+    }
   }
 
   /// Callback for when the drag gesture has been cancelled for the current
@@ -106,21 +113,23 @@ class _FingerChooserState extends State<FingerChooser>
 
   void _winnerAnimate(ConcentricCircle concentricCircle) {
     HapticFeedback.heavyImpact();
-    _winnerController = new AnimationController(
+    AnimationController animationController = new AnimationController(
         vsync: this, duration: Duration(milliseconds: 500));
+    _winnerController = new RedisposableAnimationController(
+        animationController: animationController);
     Animation<double> winnerSelector = new Tween<double>(
             begin: 70,
             end: max(MediaQuery.of(context).size.width,
                 MediaQuery.of(context).size.height))
         .animate(new CurvedAnimation(
-            parent: _winnerController, curve: Curves.easeInCirc));
+            parent: animationController, curve: Curves.easeInCirc));
     winnerSelector.addListener(() {
       setState(() {
         concentricCircle.innerRadius = winnerSelector.value;
       });
     });
 
-    _winnerController.forward();
+    animationController.forward();
   }
 
   void _animateOnTouch(String id, ConcentricCircle concentricCircle) {
@@ -155,10 +164,6 @@ class _FingerChooserState extends State<FingerChooser>
         center: offset, color: _colors[_colorIndex++ % _colors.length]);
 
     _addFinger(id, concentricCircle);
-
-    if (_fingers == 2) {
-      new Timer(new Duration(seconds: 2), _winnerTimerCallBack);
-    }
 
     _animateOnTouch(id, concentricCircle);
     return circleDrag;
@@ -197,7 +202,7 @@ class _FingerChooserState extends State<FingerChooser>
     super.dispose();
 
     // Cleanup leftover animation controllers
-    _winnerController.dispose();
+//    _winnerController.dispose();
     for (AnimationController controller in _circlePopAnimator.values) {
       controller.dispose();
     }
